@@ -1,0 +1,89 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+
+pthread_barrier_t barreira_largada;
+
+typedef struct 
+{
+    int id;
+    int num;
+}Thread;
+ 
+void* funcao_thread( void* arg){
+
+    Thread* dados = (Thread*)arg;
+    int id = dados->id;
+    printf("Thread %d iniciada\n", id);
+    pthread_barrier_wait(&barreira_largada);
+    printf("Thread %d acordando\n", id);
+    while(dados->num != 100){
+        dados->num++;
+        usleep(10000);
+    }
+    if(dados->num = 100){
+        printf("Thread %d acabou\n", id);
+        return NULL;
+    }
+    
+}
+
+int main(){
+
+    pthread_t t1, t2, t3, t4, t5;
+    Thread trd1, trd2, trd3, trd4, trd5;
+    trd1 = (Thread){1,0};
+    trd2 = (Thread){2,0};
+    trd3 = (Thread){3,0};
+    trd4 = (Thread){4,0};
+    trd5 = (Thread){5,0};
+
+    pthread_barrier_init(&barreira_largada, NULL, 5);
+    
+    if(pthread_create(&t1, NULL, funcao_thread, &trd1)){
+        perror("Falha ao criar a thread 1\n");
+        return 1;
+    }
+    if(pthread_create(&t2, NULL, funcao_thread, &trd2)){
+        perror("Falha ao criar a thread 2\n");
+        return 1;
+    }
+    if(pthread_create(&t3, NULL, funcao_thread, &trd3)){
+        perror("Falha ao criar a thread 3\n");
+        return 1;
+    }
+    if(pthread_create(&t4, NULL, funcao_thread, &trd4)){
+        perror("Falha ao criar a thread 4\n");
+        return 1;
+    }
+    if(pthread_create(&t5, NULL, funcao_thread, &trd5)){
+        perror("Falha ao criar a thread 5\n");
+        return 1;
+    }
+
+    if(pthread_join(t1,NULL)!=0){
+        perror("Falha na thread 1\n");
+        return 1;
+    }
+    if(pthread_join(t2,NULL)!=0){
+        perror("Falha na thread 2\n");
+        return 1;
+    }
+    if(pthread_join(t3,NULL)!=0){
+        perror("Falha na thread 3\n");
+        return 1;
+    }
+    if(pthread_join(t4,NULL)!=0){
+        perror("Falha na thread 4\n");
+        return 1;
+    }
+    if(pthread_join(t5,NULL)!=0){
+        perror("Falha na thread 5\n");
+        return 1;
+    }
+
+    pthread_barrier_destroy(&barreira_largada);
+
+    return 0;
+}
