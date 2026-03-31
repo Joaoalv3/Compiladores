@@ -56,9 +56,19 @@ typedef struct {
 
 typedef struct {
     const char *fonte;
-    int pos;
+
+    int pivo;
+    int batedor;
+
     int linha;
     int coluna;
+
+    int linha_pivo;
+    int coluna_pivo;
+
+    int erro_comentario;
+    int linha_erro;
+    int coluna_erro;
 } Lexer;
 
 const char *palavras_chave[] = {
@@ -66,7 +76,8 @@ const char *palavras_chave[] = {
     "return", "void", "typedef", "struct"
 };
 
-int quantidade_palavras_chave = sizeof(palavras_chave) / sizeof(palavras_chave[0]);
+int quantidade_palavras_chave =
+    sizeof(palavras_chave) / sizeof(palavras_chave[0]);
 
 const char *nome_token(TokenType tipo) {
     switch (tipo) {
@@ -115,22 +126,30 @@ const char *nome_token(TokenType tipo) {
 
 void inicializar_lexer(Lexer *lexer, const char *fonte) {
     lexer->fonte = fonte;
-    lexer->pos = 0;
+    lexer->pivo = 0;
+    lexer->batedor = 0;
     lexer->linha = 1;
     lexer->coluna = 1;
+    lexer->linha_pivo = 1;
+    lexer->coluna_pivo = 1;
+    lexer->erro_comentario = 0;
+    lexer->linha_erro = 0;
+    lexer->coluna_erro = 0;
 }
 
 char atual(Lexer *lexer) {
-    return lexer->fonte[lexer->pos];
+    return lexer->fonte[lexer->batedor];
 }
 
 char proximo(Lexer *lexer) {
-    if (lexer->fonte[lexer->pos] == '\0') return '\0';
-    return lexer->fonte[lexer->pos + 1];
+    if (lexer->fonte[lexer->batedor] == '\0') {
+        return '\0';
+    }
+    return lexer->fonte[lexer->batedor + 1];
 }
 
 char avancar(Lexer *lexer) {
-    char c = lexer->fonte[lexer->pos];
+    char c = lexer->fonte[lexer->batedor];
 
     if (c == '\n') {
         lexer->linha++;
@@ -139,8 +158,14 @@ char avancar(Lexer *lexer) {
         lexer->coluna++;
     }
 
-    lexer->pos++;
+    lexer->batedor++;
     return c;
+}
+
+void marcar_inicio_lexema(Lexer *lexer) {
+    lexer->pivo = lexer->batedor;
+    lexer->linha_pivo = lexer->linha;
+    lexer->coluna_pivo = lexer->coluna;
 }
 
 int eh_palavra_chave(const char *texto) {
@@ -152,11 +177,37 @@ int eh_palavra_chave(const char *texto) {
     return 0;
 }
 
+Token criar_token_mensagem(TokenType tipo, const char *mensagem, int linha, int coluna) {
+    Token token;
+    token.tipo = tipo;
+    strncpy(token.lexema, mensagem, MAX_LEXEMA - 1);
+    token.lexema[MAX_LEXEMA - 1] = '\0';
+    token.linha = linha;
+    token.coluna = coluna;
+    return token;
+}
+
+Token criar_token_intervalo(Lexer *lexer, TokenType tipo) {
+    Token token;
+    int tamanho = lexer->batedor - lexer->pivo;
+
+    if (tamanho < 0) tamanho = 0;
+    if (tamanho >= MAX_LEXEMA) tamanho = MAX_LEXEMA - 1;
+
+    token.tipo = tipo;
+    strncpy(token.lexema, lexer->fonte + lexer->pivo, tamanho);
+    token.lexema[tamanho] = '\0';
+    token.linha = lexer->linha_pivo;
+    token.coluna = lexer->coluna_pivo;
+
+    return token;
+}
+
 void pular_espacos_e_comentarios(Lexer *lexer) {
     while (1) {
         char c = atual(lexer);
 
-        while (isspace(c)) {
+        while (isspace((unsigned char)c)) {
             avancar(lexer);
             c = atual(lexer);
         }
@@ -169,6 +220,9 @@ void pular_espacos_e_comentarios(Lexer *lexer) {
         }
 
         if (c == '/' && proximo(lexer) == '*') {
+            int linha_inicio = lexer->linha;
+            int coluna_inicio = lexer->coluna;
+
             avancar(lexer); // /
             avancar(lexer); // *
 
@@ -177,10 +231,15 @@ void pular_espacos_e_comentarios(Lexer *lexer) {
                 avancar(lexer);
             }
 
-            if (atual(lexer) == '*' && proximo(lexer) == '/') {
-                avancar(lexer); // *
-                avancar(lexer); // /
+            if (atual(lexer) == '\0') {
+                lexer->erro_comentario = 1;
+                lexer->linha_erro = linha_inicio;
+                lexer->coluna_erro = coluna_inicio;
+                return;
             }
+
+            avancar(lexer); // *
+            avancar(lexer); // /
             continue;
         }
 
@@ -188,252 +247,240 @@ void pular_espacos_e_comentarios(Lexer *lexer) {
     }
 }
 
-Token criar_token(TokenType tipo, const char *lexema, int linha, int coluna) {
-    Token token;
-    token.tipo = tipo;
-    strncpy(token.lexema, lexema, MAX_LEXEMA - 1);
-    token.lexema[MAX_LEXEMA - 1] = '\0';
-    token.linha = linha;
-    token.coluna = coluna;
+Token ler_identificador_ou_palavra_chave(Lexer *lexer) {
+    marcar_inicio_lexema(lexer);
+
+    while (isalnum((unsigned char)atual(lexer)) || atual(lexer) == '_') {
+        avancar(lexer);
+    }
+
+    Token token = criar_token_intervalo(lexer, TOKEN_IDENTIFICADOR);
+
+    if (eh_palavra_chave(token.lexema)) {
+        token.tipo = TOKEN_PALAVRA_CHAVE;
+    }
+
     return token;
 }
 
-Token ler_identificador_ou_palavra_chave(Lexer *lexer) {
-    char buffer[MAX_LEXEMA];
-    int i = 0;
-    int linha_inicio = lexer->linha;
-    int coluna_inicio = lexer->coluna;
-
-    while (isalnum(atual(lexer)) || atual(lexer) == '_') {
-        if (i < MAX_LEXEMA - 1) {
-            buffer[i++] = avancar(lexer);
-        } else {
-            avancar(lexer);
-        }
-    }
-
-    buffer[i] = '\0';
-
-    if (eh_palavra_chave(buffer)) {
-        return criar_token(TOKEN_PALAVRA_CHAVE, buffer, linha_inicio, coluna_inicio);
-    }
-
-    return criar_token(TOKEN_IDENTIFICADOR, buffer, linha_inicio, coluna_inicio);
-}
-
 Token ler_numero(Lexer *lexer) {
-    char buffer[MAX_LEXEMA];
-    int i = 0;
-    int linha_inicio = lexer->linha;
-    int coluna_inicio = lexer->coluna;
     int tem_ponto = 0;
+    marcar_inicio_lexema(lexer);
 
-    while (isdigit(atual(lexer)) || (atual(lexer) == '.' && !tem_ponto)) {
+    while (isdigit((unsigned char)atual(lexer)) ||
+           (atual(lexer) == '.' && !tem_ponto)) {
         if (atual(lexer) == '.') {
             tem_ponto = 1;
         }
+        avancar(lexer);
+    }
 
-        if (i < MAX_LEXEMA - 1) {
-            buffer[i++] = avancar(lexer);
+    if (tem_ponto) {
+        return criar_token_intervalo(lexer, TOKEN_NUMERO_REAL);
+    }
+
+    return criar_token_intervalo(lexer, TOKEN_NUMERO_INTEIRO);
+}
+
+Token ler_string(Lexer *lexer) {
+    int inicio_linha, inicio_coluna;
+    marcar_inicio_lexema(lexer);
+
+    inicio_linha = lexer->linha;
+    inicio_coluna = lexer->coluna;
+
+    avancar(lexer); // abre "
+
+    marcar_inicio_lexema(lexer); // lexema começa depois da aspas
+
+    while (atual(lexer) != '"' && atual(lexer) != '\0') {
+        if (atual(lexer) == '\\' && proximo(lexer) != '\0') {
+            avancar(lexer);
+            avancar(lexer);
         } else {
             avancar(lexer);
         }
     }
 
-    buffer[i] = '\0';
-
-    if (tem_ponto) {
-        return criar_token(TOKEN_NUMERO_REAL, buffer, linha_inicio, coluna_inicio);
+    if (atual(lexer) == '\0') {
+        return criar_token_mensagem(
+            TOKEN_ERRO,
+            "String nao terminada",
+            inicio_linha,
+            inicio_coluna
+        );
     }
 
-    return criar_token(TOKEN_NUMERO_INTEIRO, buffer, linha_inicio, coluna_inicio);
-}
+    Token token = criar_token_intervalo(lexer, TOKEN_STRING);
+    avancar(lexer); // fecha "
 
-Token ler_string(Lexer *lexer) {
-    char buffer[MAX_LEXEMA];
-    int i = 0;
-    int linha_inicio = lexer->linha;
-    int coluna_inicio = lexer->coluna;
-
-    avancar(lexer); // consome "
-
-    while (atual(lexer) != '"' && atual(lexer) != '\0') {
-        if (atual(lexer) == '\\' && proximo(lexer) != '\0') {
-            if (i < MAX_LEXEMA - 1) buffer[i++] = avancar(lexer);
-            if (i < MAX_LEXEMA - 1) buffer[i++] = avancar(lexer);
-        } else {
-            if (i < MAX_LEXEMA - 1) {
-                buffer[i++] = avancar(lexer);
-            } else {
-                avancar(lexer);
-            }
-        }
-    }
-
-    if (atual(lexer) == '"') {
-        avancar(lexer); // consome "
-        buffer[i] = '\0';
-        return criar_token(TOKEN_STRING, buffer, linha_inicio, coluna_inicio);
-    }
-
-    buffer[i] = '\0';
-    return criar_token(TOKEN_ERRO, "String nao terminada", linha_inicio, coluna_inicio);
+    return token;
 }
 
 Token proximo_token(Lexer *lexer) {
     pular_espacos_e_comentarios(lexer);
 
-    int linha_inicio = lexer->linha;
-    int coluna_inicio = lexer->coluna;
-    char c = atual(lexer);
-
-    if (c == '\0') {
-        return criar_token(TOKEN_EOF, "EOF", linha_inicio, coluna_inicio);
+    if (lexer->erro_comentario) {
+        lexer->erro_comentario = 0;
+        return criar_token_mensagem(
+            TOKEN_ERRO,
+            "Comentario de bloco nao fechado",
+            lexer->linha_erro,
+            lexer->coluna_erro
+        );
     }
 
-    if (isalpha(c) || c == '_') {
+    if (atual(lexer) == '\0') {
+        return criar_token_mensagem(TOKEN_EOF, "EOF", lexer->linha, lexer->coluna);
+    }
+
+    if (isalpha((unsigned char)atual(lexer)) || atual(lexer) == '_') {
         return ler_identificador_ou_palavra_chave(lexer);
     }
 
-    if (isdigit(c)) {
+    if (isdigit((unsigned char)atual(lexer))) {
         return ler_numero(lexer);
     }
 
-    if (c == '"') {
+    if (atual(lexer) == '"') {
         return ler_string(lexer);
     }
 
-    switch (c) {
+    marcar_inicio_lexema(lexer);
+
+    switch (atual(lexer)) {
         case '+':
-            if (proximo(lexer) == '+') {
-                avancar(lexer);
-                avancar(lexer);
-                return criar_token(TOKEN_INCREMENTO, "++", linha_inicio, coluna_inicio);
-            }
             avancar(lexer);
-            return criar_token(TOKEN_MAIS, "+", linha_inicio, coluna_inicio);
+            if (atual(lexer) == '+') {
+                avancar(lexer);
+                return criar_token_intervalo(lexer, TOKEN_INCREMENTO);
+            }
+            return criar_token_intervalo(lexer, TOKEN_MAIS);
 
         case '-':
-            if (proximo(lexer) == '>') {
-                avancar(lexer);
-                avancar(lexer);
-                return criar_token(TOKEN_SETA, "->", linha_inicio, coluna_inicio);
-            }
-            if (proximo(lexer) == '-') {
-                avancar(lexer);
-                avancar(lexer);
-                return criar_token(TOKEN_DECREMENTO, "--", linha_inicio, coluna_inicio);
-            }
             avancar(lexer);
-            return criar_token(TOKEN_MENOS, "-", linha_inicio, coluna_inicio);
+            if (atual(lexer) == '>') {
+                avancar(lexer);
+                return criar_token_intervalo(lexer, TOKEN_SETA);
+            }
+            if (atual(lexer) == '-') {
+                avancar(lexer);
+                return criar_token_intervalo(lexer, TOKEN_DECREMENTO);
+            }
+            return criar_token_intervalo(lexer, TOKEN_MENOS);
 
         case '*':
             avancar(lexer);
-            return criar_token(TOKEN_MULTIPLICACAO, "*", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_MULTIPLICACAO);
 
         case '/':
             avancar(lexer);
-            return criar_token(TOKEN_DIVISAO, "/", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_DIVISAO);
 
         case '=':
-            if (proximo(lexer) == '=') {
-                avancar(lexer);
-                avancar(lexer);
-                return criar_token(TOKEN_IGUAL, "==", linha_inicio, coluna_inicio);
-            }
             avancar(lexer);
-            return criar_token(TOKEN_ATRIBUICAO, "=", linha_inicio, coluna_inicio);
+            if (atual(lexer) == '=') {
+                avancar(lexer);
+                return criar_token_intervalo(lexer, TOKEN_IGUAL);
+            }
+            return criar_token_intervalo(lexer, TOKEN_ATRIBUICAO);
 
         case '!':
-            if (proximo(lexer) == '=') {
-                avancar(lexer);
-                avancar(lexer);
-                return criar_token(TOKEN_DIFERENTE, "!=", linha_inicio, coluna_inicio);
-            }
             avancar(lexer);
-            return criar_token(TOKEN_NOT, "!", linha_inicio, coluna_inicio);
+            if (atual(lexer) == '=') {
+                avancar(lexer);
+                return criar_token_intervalo(lexer, TOKEN_DIFERENTE);
+            }
+            return criar_token_intervalo(lexer, TOKEN_NOT);
 
         case '<':
-            if (proximo(lexer) == '=') {
-                avancar(lexer);
-                avancar(lexer);
-                return criar_token(TOKEN_MENOR_IGUAL, "<=", linha_inicio, coluna_inicio);
-            }
             avancar(lexer);
-            return criar_token(TOKEN_MENOR, "<", linha_inicio, coluna_inicio);
+            if (atual(lexer) == '=') {
+                avancar(lexer);
+                return criar_token_intervalo(lexer, TOKEN_MENOR_IGUAL);
+            }
+            return criar_token_intervalo(lexer, TOKEN_MENOR);
 
         case '>':
-            if (proximo(lexer) == '=') {
-                avancar(lexer);
-                avancar(lexer);
-                return criar_token(TOKEN_MAIOR_IGUAL, ">=", linha_inicio, coluna_inicio);
-            }
             avancar(lexer);
-            return criar_token(TOKEN_MAIOR, ">", linha_inicio, coluna_inicio);
+            if (atual(lexer) == '=') {
+                avancar(lexer);
+                return criar_token_intervalo(lexer, TOKEN_MAIOR_IGUAL);
+            }
+            return criar_token_intervalo(lexer, TOKEN_MAIOR);
 
         case '&':
-            if (proximo(lexer) == '&') {
-                avancar(lexer);
-                avancar(lexer);
-                return criar_token(TOKEN_AND, "&&", linha_inicio, coluna_inicio);
-            }
             avancar(lexer);
-            return criar_token(TOKEN_E_COMERCIAL, "&", linha_inicio, coluna_inicio);
+            if (atual(lexer) == '&') {
+                avancar(lexer);
+                return criar_token_intervalo(lexer, TOKEN_AND);
+            }
+            return criar_token_intervalo(lexer, TOKEN_E_COMERCIAL);
 
         case '|':
-            if (proximo(lexer) == '|') {
-                avancar(lexer);
-                avancar(lexer);
-                return criar_token(TOKEN_OR, "||", linha_inicio, coluna_inicio);
-            }
             avancar(lexer);
-            return criar_token(TOKEN_ERRO, "| invalido", linha_inicio, coluna_inicio);
+            if (atual(lexer) == '|') {
+                avancar(lexer);
+                return criar_token_intervalo(lexer, TOKEN_OR);
+            }
+            return criar_token_mensagem(
+                TOKEN_ERRO,
+                "| invalido",
+                lexer->linha_pivo,
+                lexer->coluna_pivo
+            );
 
         case ';':
             avancar(lexer);
-            return criar_token(TOKEN_PONTO_VIRGULA, ";", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_PONTO_VIRGULA);
 
         case ',':
             avancar(lexer);
-            return criar_token(TOKEN_VIRGULA, ",", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_VIRGULA);
 
         case '(':
             avancar(lexer);
-            return criar_token(TOKEN_ABRE_PAREN, "(", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_ABRE_PAREN);
 
         case ')':
             avancar(lexer);
-            return criar_token(TOKEN_FECHA_PAREN, ")", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_FECHA_PAREN);
 
         case '{':
             avancar(lexer);
-            return criar_token(TOKEN_ABRE_CHAVE, "{", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_ABRE_CHAVE);
 
         case '}':
             avancar(lexer);
-            return criar_token(TOKEN_FECHA_CHAVE, "}", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_FECHA_CHAVE);
 
         case '[':
             avancar(lexer);
-            return criar_token(TOKEN_ABRE_COLCH, "[", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_ABRE_COLCH);
 
         case ']':
             avancar(lexer);
-            return criar_token(TOKEN_FECHA_COLCH, "]", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_FECHA_COLCH);
 
         case '.':
             avancar(lexer);
-            return criar_token(TOKEN_PONTO, ".", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_PONTO);
 
         case '#':
             avancar(lexer);
-            return criar_token(TOKEN_HASH, "#", linha_inicio, coluna_inicio);
+            return criar_token_intervalo(lexer, TOKEN_HASH);
 
         default: {
             char erro[64];
+            char c = atual(lexer);
             snprintf(erro, sizeof(erro), "Simbolo invalido: %c", c);
             avancar(lexer);
-            return criar_token(TOKEN_ERRO, erro, linha_inicio, coluna_inicio);
+            return criar_token_mensagem(
+                TOKEN_ERRO,
+                erro,
+                lexer->linha_pivo,
+                lexer->coluna_pivo
+            );
         }
     }
 }
@@ -462,7 +509,9 @@ char *ler_arquivo(const char *nome_arquivo) {
 }
 
 int main(int argc, char *argv[]) {
-    char *codigo = NULL;
+    char *codigo;
+    Lexer lexer;
+    Token token;
 
     if (argc < 2) {
         printf("Uso: %s arquivo.txt\n", argv[0]);
@@ -475,10 +524,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    Lexer lexer;
     inicializar_lexer(&lexer, codigo);
 
-    Token token;
     do {
         token = proximo_token(&lexer);
         printf("Linha %d, Coluna %d -> %-18s : %s\n",
